@@ -328,6 +328,22 @@
             opacity: 0.7;
         }
 
+        .message-provider {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 8px;
+            padding: 4px 8px;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            background: rgba(255, 255, 255, 0.16);
+            color: rgba(255, 255, 255, 0.92);
+            width: fit-content;
+        }
+
         @keyframes messagePop {
             0% { opacity: 0; transform: translateY(10px) scale(0.97); }
             100% { opacity: 1; transform: translateY(0) scale(1); }
@@ -704,10 +720,15 @@
             return new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
         }
 
-        function addMessage(content, isUser = false) {
+        function addMessage(content, isUser = false, provider = null) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${isUser ? 'user' : 'bot'}`;
-            messageDiv.innerHTML = `<strong>${isUser ? 'You' : 'Bot'}:</strong> ${content}<span class="message-time">${formatTime()}</span>`;
+
+            const providerMarkup = !isUser && provider
+                ? `<div class="message-provider">${provider}</div>`
+                : '';
+
+            messageDiv.innerHTML = `<strong>${isUser ? 'You' : 'Bot'}:</strong> ${content}<span class="message-time">${formatTime()}</span>${providerMarkup}`;
             chatMessages.appendChild(messageDiv);
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
@@ -738,7 +759,7 @@
 
                 const data = await response.json();
                 hideTyping();
-                addMessage(data.reply || 'Sorry, I could not generate a reply.');
+                addMessage(data.reply || 'Sorry, I could not generate a reply.', false, data.provider || 'fallback');
             } catch (error) {
                 hideTyping();
                 addMessage('Sorry, the chat service is unavailable right now.');

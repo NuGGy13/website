@@ -121,15 +121,15 @@ def get_bot_response(user_message):
 
     groq_result = get_groq_response(user_message)
     if groq_result:
-        return groq_result
+        return {"reply": groq_result, "provider": "groq"}
 
     hf_result = get_hf_response(user_message)
     if hf_result:
-        return hf_result
+        return {"reply": hf_result, "provider": "huggingface"}
 
     openai_result = get_openai_response(user_message)
     if openai_result:
-        return openai_result
+        return {"reply": openai_result, "provider": "openai"}
 
     fallback = [
         "I'm ready to help. Tell me more about what you need.",
@@ -137,7 +137,7 @@ def get_bot_response(user_message):
         "I can answer questions or help you brainstorm ideas.",
         "Let's keep going. What should we discuss now?",
     ]
-    return fallback[hash(user_message) % len(fallback)]
+    return {"reply": fallback[hash(user_message) % len(fallback)], "provider": "fallback"}
 
 
 @app.route("/")
@@ -153,8 +153,8 @@ def chat():
     if not user_message:
         return jsonify({"reply": "Please enter a message."}), 400
 
-    reply = get_bot_response(user_message)
-    return jsonify({"reply": reply})
+    result = get_bot_response(user_message)
+    return jsonify({"reply": result["reply"], "provider": result["provider"]})
 
 
 def get_openai_response(user_message):
