@@ -14,6 +14,7 @@ START_TIME = time.time()
 
 HF_MODEL = "google/flan-t5-small"
 DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
+DEFAULT_OPENAI_MODEL = "gpt-3.5-turbo"
 
 
 def get_env_value(name, default=None):
@@ -35,10 +36,18 @@ def get_groq_model():
     return get_env_value("GROQ_MODEL", DEFAULT_GROQ_MODEL)
 
 
+def get_openai_key():
+    return get_env_value("OPENAI_API_KEY") or get_env_value("OPENAI_TOKEN")
+
+
+def get_openai_model():
+    return get_env_value("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+
+
 def has_real_value(value):
     if not value:
         return False
-    return value.strip().lower() not in {"your_hugging_face_token_here", "your_groq_api_key_here", "changeme", "placeholder"}
+    return value.strip().lower() not in {"your_hugging_face_token_here", "your_groq_api_key_here", "your_openai_api_key_here", "changeme", "placeholder"}
 
 
 def get_hf_response(user_message):
@@ -107,7 +116,7 @@ def get_groq_response(user_message):
 
 
 def get_bot_response(user_message):
-    if not (get_groq_key() or get_hf_token()):
+    if not (get_groq_key() or get_hf_token() or get_openai_key()):
         app.logger.warning("AI credentials are not configured; using fallback reply")
 
     groq_result = get_groq_response(user_message)
@@ -117,6 +126,10 @@ def get_bot_response(user_message):
     hf_result = get_hf_response(user_message)
     if hf_result:
         return hf_result
+
+    openai_result = get_openai_response(user_message)
+    if openai_result:
+        return openai_result
 
     fallback = [
         "I'm ready to help. Tell me more about what you need.",
@@ -144,6 +157,37 @@ def chat():
     return jsonify({"reply": reply})
 
 
+def get_openai_response(user_message):
+    openai_key = get_openai_key()
+    if not has_real_value(openai_key):
+        return None
+
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {openai_key}",
+        "Content-Type": "application/json",
+    }
+    data = {
+        "model": get_openai_model(),
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": user_message},
+        ],
+        "temperature": 0.7,
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        response.raise_for_status()
+        output = response.json()
+        if output.get("choices"):
+            return output["choices"][0]["message"]["content"].strip()
+    except requests.RequestException:
+        return None
+
+    return None
+
+
 @app.route('/status', methods=['GET'])
 def status():
     """Return basic service status and simple AI endpoint reachability/latency."""
@@ -156,6 +200,7 @@ def status():
     checks['env'] = {
         'groq_configured': bool(get_groq_key()),
         'huggingface_configured': bool(get_hf_token()),
+        'openai_configured': bool(get_openai_key()),
     }
 
     # check groq reachability
@@ -184,12 +229,29 @@ def status():
     else:
         checks['huggingface'] = {'reachable': False, 'latency_ms': None}
 
+    # check openai reachability
+    openai_key = get_openai_key()
+    if openai_key:
+        try:
+            t0 = time.time()
+            resp = requests.get('https://api.openai.com/v1/models', headers={
+                'Authorization': f'Bearer {openai_key}',
+            }, timeout=3)
+            latency = int((time.time() - t0) * 1000)
+            checks['openai'] = {'reachable': resp.ok, 'latency_ms': latency}
+        except requests.RequestException:
+            checks['openai'] = {'reachable': False, 'latency_ms': None}
+    else:
+        checks['openai'] = {'reachable': False, 'latency_ms': None}
+
     # aggregate status
     providers = []
     if checks['groq']['reachable']:
         providers.append('groq')
     if checks['huggingface']['reachable']:
         providers.append('huggingface')
+    if checks['openai']['reachable']:
+        providers.append('openai')
 
     checks['providers_available'] = providers
     checks['overall'] = 'online' if providers else 'degraded'
