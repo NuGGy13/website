@@ -13,9 +13,26 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 START_TIME = time.time()
 
 HF_MODEL = "google/flan-t5-small"
-HF_API_TOKEN = os.environ.get("HUGGINGFACE_API_TOKEN")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
+
+
+def get_env_value(name, default=None):
+    value = os.environ.get(name, default)
+    if value is None:
+        return None
+    return value.strip() or None
+
+
+def get_hf_token():
+    return get_env_value("HUGGINGFACE_API_TOKEN") or get_env_value("HF_API_TOKEN")
+
+
+def get_groq_key():
+    return get_env_value("GROQ_API_KEY") or get_env_value("GROQ_API_TOKEN")
+
+
+def get_groq_model():
+    return get_env_value("GROQ_MODEL", DEFAULT_GROQ_MODEL)
 
 
 def has_real_value(value):
@@ -25,12 +42,13 @@ def has_real_value(value):
 
 
 def get_hf_response(user_message):
-    if not has_real_value(HF_API_TOKEN):
+    hf_token = get_hf_token()
+    if not has_real_value(hf_token):
         return None
 
     url = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
     headers = {
-        "Authorization": f"Bearer {HF_API_TOKEN}",
+        "Authorization": f"Bearer {hf_token}",
         "Content-Type": "application/json",
     }
     data = {
@@ -58,16 +76,17 @@ def get_hf_response(user_message):
 
 
 def get_groq_response(user_message):
-    if not has_real_value(GROQ_API_KEY):
+    groq_key = get_groq_key()
+    if not has_real_value(groq_key):
         return None
 
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Authorization": f"Bearer {groq_key}",
         "Content-Type": "application/json",
     }
     data = {
-        "model": GROQ_MODEL,
+        "model": get_groq_model(),
         "messages": [
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": user_message},
@@ -88,6 +107,9 @@ def get_groq_response(user_message):
 
 
 def get_bot_response(user_message):
+    if not (get_groq_key() or get_hf_token()):
+        app.logger.warning("AI credentials are not configured; using fallback reply")
+
     groq_result = get_groq_response(user_message)
     if groq_result:
         return groq_result
@@ -131,8 +153,13 @@ def status():
     checks['uptime_seconds'] = int(time.time() - START_TIME)
     checks['time'] = int(time.time())
 
+    checks['env'] = {
+        'groq_configured': bool(get_groq_key()),
+        'huggingface_configured': bool(get_hf_token()),
+    }
+
     # check groq reachability
-    groq_key = os.environ.get('GROQ_API_KEY')
+    groq_key = get_groq_key()
     if groq_key:
         try:
             t0 = time.time()
@@ -145,7 +172,7 @@ def status():
         checks['groq'] = {'reachable': False, 'latency_ms': None}
 
     # check huggingface reachability
-    hf_key = os.environ.get('HUGGINGFACE_API_TOKEN')
+    hf_key = get_hf_token()
     if hf_key:
         try:
             t0 = time.time()
