@@ -4,12 +4,53 @@ import os
 from pathlib import Path
 
 import requests
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 from flask import Flask, render_template, request, jsonify
 import time
 
+from logger import export_daily_backup, init_db, log_interaction, log_user_credentials
+
 app = Flask(__name__)
-load_dotenv(Path(__file__).resolve().parent / ".env")
+
+BASE_DIR = Path(__file__).resolve().parent
+init_db()
+
+
+
+def is_placeholder_value(value):
+    if not value:
+        return True
+    normalized = value.strip().lower()
+    return normalized in {
+        "your_hugging_face_token_here",
+        "your_groq_api_key_here",
+        "your_openai_api_key_here",
+        "changeme",
+        "placeholder",
+    } or normalized.startswith("your_") or normalized.startswith("changeme")
+
+
+ENV_FILE_VALUES = {}
+
+
+def refresh_env_values():
+    global ENV_FILE_VALUES
+    ENV_FILE_VALUES = {}
+    for env_path in (BASE_DIR / ".env", BASE_DIR / ".env.example"):
+        if env_path.exists():
+            parsed = dotenv_values(env_path)
+            for key, value in parsed.items():
+                if value is not None and key not in ENV_FILE_VALUES:
+                    ENV_FILE_VALUES[key] = value.strip()
+
+    for key, value in ENV_FILE_VALUES.items():
+        current_value = os.environ.get(key)
+        if not current_value or is_placeholder_value(current_value):
+            os.environ[key] = value
+
+
+refresh_env_values()
+
 START_TIME = time.time()
 
 HF_MODEL = "google/flan-t5-small"
@@ -18,7 +59,10 @@ DEFAULT_OPENAI_MODEL = "gpt-3.5-turbo"
 
 
 def get_env_value(name, default=None):
-    value = os.environ.get(name, default)
+    refresh_env_values()
+    value = os.environ.get(name)
+    if value is None or is_placeholder_value(value):
+        value = ENV_FILE_VALUES.get(name, default)
     if value is None:
         return None
     return value.strip() or None
@@ -33,7 +77,7 @@ def get_groq_key():
 
 
 def get_groq_model():
-    return get_env_value("GROQ_MODEL", DEFAULT_GROQ_MODEL)
+    return get_env_value("GROQ_MODEL") or get_env_value("GROQ-MODEL") or DEFAULT_GROQ_MODEL
 
 
 def get_openai_key():
@@ -137,7 +181,11 @@ def get_bot_response(user_message):
         "I can answer questions or help you brainstorm ideas.",
         "Let's keep going. What should we discuss now?",
     ]
-    return {"reply": fallback[hash(user_message) % len(fallback)], "provider": "fallback"}
+    return {
+        "reply": fallback[hash(user_message) % len(fallback)],
+        "provider": "fallback",
+        "debug": "No provider responded successfully. Check API keys and quotas.",
+    }
 
 
 @app.route("/")
@@ -149,12 +197,68 @@ def home():
 def chat():
     payload = request.get_json(silent=True) or {}
     user_message = (payload.get("message") or "").strip()
+    user_id = (payload.get("user_id") or "anonymous").strip()
 
     if not user_message:
+        log_interaction(
+            prompt="",
+            response="Please enter a message.",
+            error="empty_message",
+            model_used="chat",
+            user_id=user_id,
+        )
         return jsonify({"reply": "Please enter a message."}), 400
 
-    result = get_bot_response(user_message)
-    return jsonify({"reply": result["reply"], "provider": result["provider"]})
+    try:
+        result = get_bot_response(user_message)
+        payload = {"reply": result["reply"], "provider": result["provider"]}
+        if result.get("debug"):
+            payload["debug"] = result["debug"]
+
+        log_interaction(
+            prompt=user_message,
+            response=result["reply"],
+            model_used=result.get("provider", "unknown"),
+            user_id=user_id,
+        )
+        return jsonify(payload)
+    except Exception as exc:
+        log_interaction(
+            prompt=user_message,
+            response=None,
+            error=str(exc),
+            model_used="chat",
+            user_id=user_id,
+        )
+        app.logger.exception("Chat request failed")
+        return jsonify({"reply": "Sorry, something went wrong while processing your message."}), 500
+
+
+@app.route("/admin/logs")
+def admin_logs():
+    import sqlite3
+
+    conn = sqlite3.connect("chat_logs.db")
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT id, timestamp, user_id, model_used, prompt, response, error, status FROM interaction_logs ORDER BY id DESC LIMIT 100"
+    ).fetchall()
+    conn.close()
+
+    return render_template("admin_logs.html", logs=rows)
+
+
+@app.route("/backup-logs")
+def backup_logs():
+    folder_name = (request.args.get("folder_name") or "chat_log_backups").strip() or "chat_log_backups"
+    backup_dir = Path.home() / "Desktop" / folder_name
+
+    try:
+        backup_path = export_daily_backup(backup_dir=str(backup_dir))
+        return jsonify({"status": "ok", "folder": folder_name, "backup_path": backup_path})
+    except Exception as exc:
+        app.logger.exception("Failed to create backup")
+        return jsonify({"status": "error", "message": str(exc)}), 500
 
 
 def get_openai_response(user_message):

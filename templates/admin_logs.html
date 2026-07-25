@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Logs</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 24px; background: #111; color: #f5f5f5; }
+        h1 { margin-bottom: 16px; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { border: 1px solid #444; padding: 8px; vertical-align: top; text-align: left; }
+        th { background: #222; }
+        tr:nth-child(even) { background: #1a1a1a; }
+        .muted { color: #aaa; }
+    </style>
+</head>
+<body>
+    <h1>Chat Admin Logs</h1>
+    <p class="muted">Showing the latest 100 interactions.</p>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Time</th>
+                <th>User</th>
+                <th>Model</th>
+                <th>Status</th>
+                <th>Prompt</th>
+                <th>Response</th>
+                <th>Error</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td>{{ log.id }}</td>
+                <td>{{ log.timestamp }}</td>
+                <td>{{ log.user_id or 'anonymous' }}</td>
+                <td>{{ log.model_used or '-' }}</td>
+                <td>{{ log.status }}</td>
+                <td>{{ log.prompt }}</td>
+                <td>{{ log.response or '-' }}</td>
+                <td>{{ log.error or '-' }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="8">No logs yet.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>
